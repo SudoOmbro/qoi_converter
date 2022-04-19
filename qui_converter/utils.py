@@ -1,6 +1,17 @@
 import struct
 from functools import cache
-from typing import List, Iterable
+from typing import List, Iterable, Tuple
+
+
+@cache
+def to_u8bit(num: int):
+    if num > 255 or num < 0:
+        raise ValueError(f"An unsigned 8 bit integer can't be higher than 255 or lower than 0, value given: {num}")
+    return struct.pack("=B", num)
+
+
+def to_u32bit(num: int):
+    return struct.pack("=I", num)
 
 
 class Pixel:
@@ -15,14 +26,28 @@ class Pixel:
     def _get_hash(self) -> int:
         return (self.r * 3 + self.g * 5 + self.b * 7 + self.a * 11) % 64
 
+    def get_rgb_as_u8bit(self) -> Tuple[bytes, bytes, bytes]:
+        return (
+            to_u8bit(self.r),
+            to_u8bit(self.g),
+            to_u8bit(self.b)
+        )
 
-_DEFAULT_PIXEL = Pixel(0, 0, 0, 0)
+    def get_rgba_as_u8bit(self) -> Tuple[bytes, bytes, bytes, bytes]:
+        return (
+            to_u8bit(self.r),
+            to_u8bit(self.g),
+            to_u8bit(self.b),
+            to_u8bit(self.a)
+        )
 
 
 class RunningArray:
 
+    _DEFAULT_PIXEL = Pixel(0, 0, 0, 0)
+
     def __init__(self):
-        self._pixels: List[Pixel] = [_DEFAULT_PIXEL for _ in range(64)]
+        self._pixels: List[Pixel] = [self._DEFAULT_PIXEL for _ in range(64)]
 
     def add(self, pixel: Pixel):
         self._pixels.pop(63)
@@ -58,8 +83,8 @@ class ByteReader:
 
 class Context:
 
-    def __init__(self, current_pixel: Pixel):
-        self.current_pixel: Pixel = current_pixel
+    def __init__(self, starting_pixel: Pixel):
+        self.current_pixel: Pixel = starting_pixel
         self.previous_pixel: Pixel = Pixel(0, 0, 0, 255)
         self.running_array = RunningArray()
 
@@ -67,14 +92,3 @@ class Context:
         self.previous_pixel = self.current_pixel
         self.running_array.add(self.current_pixel)
         self.current_pixel = next_pixel
-
-
-@cache
-def to_u8bit(num: int):
-    if num > 255 or num < 0:
-        raise ValueError(f"An unsigned 8 bit integer can't be higher than 255 or lower than 0, value given: {num}")
-    return struct.pack("=B", num)
-
-
-def to_u32bit(num: int):
-    return struct.pack("=I", num)

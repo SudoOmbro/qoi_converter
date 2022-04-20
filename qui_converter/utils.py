@@ -28,11 +28,13 @@ class Pixel:
     def _get_hash(self) -> int:
         return (self.r * 3 + self.g * 5 + self.b * 7 + self.a * 11) % 64
 
-    def compare_rgb(self, pixel: "Pixel") -> int:
-        return max((self.r - pixel.r), (self.g - pixel.g), (self.b - pixel.b))
+    def compare_rgb(self, pixel: "Pixel") -> Tuple[int, int]:
+        differences = (self.r - pixel.r), (self.g - pixel.g), (self.b - pixel.b)
+        return min(differences), max(differences)
 
-    def compare_rgba(self, pixel: "Pixel"):
-        return max(self.compare_rgb(pixel), (self.a - pixel.a))
+    def compare_rgba(self, pixel: "Pixel") -> Tuple[int, int]:
+        differences = (self.r - pixel.r), (self.g - pixel.g), (self.b - pixel.b), (self.a - pixel.a)
+        return min(differences), max(differences)
 
     def get_rgb_as_u8bit(self) -> Tuple[bytes, bytes, bytes]:
         return (
@@ -48,6 +50,9 @@ class Pixel:
             to_u8bit(self.b),
             to_u8bit(self.a)
         )
+
+    def __eq__(self, other: "Pixel"):
+        return self.compare_rgba(other) == (0, 0)
 
 
 class RunningArray:
@@ -89,14 +94,34 @@ class ByteReader:
         return result
 
 
+class ChunkType:
+    QOI_OP_RGB = 0
+    QOI_OP_RGBA = 1
+    QOI_OP_INDEX = 2
+    QOI_OP_DIFF = 3
+    QOI_OP_LUMA = 4
+    QOI_OP_RUN = 5
+
+
 class Context:
 
-    def __init__(self, starting_pixel: Pixel):
-        self.current_pixel: Pixel = starting_pixel
+    def __init__(self, pixels: List[Pixel] or None = None):
+        self.pixels = pixels
+        self.array_position: int = 0
+        self.current_pixel: Pixel = pixels[0] if pixels else None
         self.previous_pixel: Pixel = Pixel(0, 0, 0, 255)
         self.running_array = RunningArray()
+        self.previous_chunk_type: int = ChunkType.QOI_OP_RGBA
 
     def next_pixel(self, next_pixel: Pixel):
+        """ manually set the next pixel, useful when reading """
         self.previous_pixel = self.current_pixel
         self.running_array.add(self.current_pixel)
+        self.current_pixel = next_pixel
+
+    def shift_pixel(self):
+        """ shift in the array of pixels, useful for writing """
+        self.array_position += 1
+        next_pixel = self.pixels[self.array_position]
+        self.previous_pixel = self.current_pixel
         self.current_pixel = next_pixel

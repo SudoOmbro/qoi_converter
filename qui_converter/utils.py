@@ -1,16 +1,18 @@
 import struct
 from functools import cache
-from typing import List, Iterable, Tuple
+from typing import List, Tuple
 
 
 @cache
 def to_u8bit(num: int):
-    if num > 255 or num < 0:
-        raise ValueError(f"An unsigned 8 bit integer can't be higher than 255 or lower than 0, value given: {num}")
+    if num < 0:
+        num = 256 + num
     return struct.pack("=B", num)
 
 
 def to_u32bit(num: int):
+    if num < 0:
+        num = 4294967296 + num
     return struct.pack("=I", num)
 
 
@@ -21,10 +23,16 @@ class Pixel:
         self.g = green
         self.b = blue
         self.a = alpha
-        self.qui_index = self._get_hash()
+        self.qoi_index = self._get_hash()
 
     def _get_hash(self) -> int:
         return (self.r * 3 + self.g * 5 + self.b * 7 + self.a * 11) % 64
+
+    def compare_rgb(self, pixel: "Pixel") -> int:
+        return max((self.r - pixel.r), (self.g - pixel.g), (self.b - pixel.b))
+
+    def compare_rgba(self, pixel: "Pixel"):
+        return max(self.compare_rgb(pixel), (self.a - pixel.a))
 
     def get_rgb_as_u8bit(self) -> Tuple[bytes, bytes, bytes]:
         return (
@@ -43,18 +51,18 @@ class Pixel:
 
 
 class RunningArray:
+    """ A 64 value long hash map that is constantly updated """
 
-    _DEFAULT_PIXEL = Pixel(0, 0, 0, 0)
+    DEFAULT_PIXEL = Pixel(0, 0, 0, 0)
 
     def __init__(self):
-        self._pixels: List[Pixel] = [self._DEFAULT_PIXEL for _ in range(64)]
+        self._pixels: List[Pixel] = [self.DEFAULT_PIXEL for _ in range(64)]
 
     def add(self, pixel: Pixel):
-        self._pixels.pop(63)
-        self._pixels.insert(0, pixel)
+        self._pixels[pixel.qoi_index] = pixel
 
-    def __iter__(self) -> Iterable:
-        return self._pixels
+    def get(self, qoi_index: int):
+        return self._pixels[qoi_index]
 
 
 class ByteReader:

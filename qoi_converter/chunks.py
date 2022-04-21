@@ -1,7 +1,7 @@
 from io import BytesIO
 from typing import List, Type
 
-from qui_converter.utils import Context, to_u8bit, Pixel, ByteReader, ChunkType
+from qoi_converter.utils import Context, to_u8bit, Pixel, ByteReader, ChunkType
 
 
 class GenericChunk:
@@ -40,7 +40,7 @@ class RGBChunk(GenericChunk):
     @classmethod
     def write(cls, context: Context, output: BytesIO):
         super().write(context, output)
-        output.write(RGBChunk.TAG)
+        output.write(cls.TAG)
         for byte in context.current_pixel.get_rgb_as_u8bit():
             output.write(byte)
         context.running_array.add(context.current_pixel)
@@ -69,7 +69,7 @@ class RGBAChunk(GenericChunk):
     @classmethod
     def write(cls, context: Context, output: BytesIO):
         super().write(context, output)
-        output.write(RGBChunk.TAG)
+        output.write(cls.TAG)
         for byte in context.current_pixel.get_rgba_as_u8bit():
             output.write(byte)
         context.running_array.add(context.current_pixel)
@@ -105,6 +105,7 @@ class INDEXChunk(GenericChunk):
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
+        # print(f"{context.running_array}wanted: {context.current_pixel.qoi_index}\n")
         return context.running_array.get(context.current_pixel.qoi_index) == context.current_pixel
 
 
@@ -120,7 +121,7 @@ class DIFFChunk(GenericChunk):
         r_diff: int = (context.current_pixel.r - context.previous_pixel.r + 2) << 4
         g_diff: int = (context.current_pixel.g - context.previous_pixel.g + 2) << 2
         b_diff: int = context.current_pixel.b - context.previous_pixel.b + 2
-        output.write(to_u8bit(DIFFChunk.TAG[0] + r_diff + g_diff + b_diff))
+        output.write(to_u8bit(cls.TAG[0] + r_diff + g_diff + b_diff))
         context.shift_pixel()
 
     @classmethod
@@ -150,7 +151,7 @@ class LUMAChunk(GenericChunk):
         green_diff: int = context.current_pixel.g - context.previous_pixel.g
         dr_dg: int = ((context.current_pixel.r - context.previous_pixel.r) - green_diff + 8) << 4
         db_dg: int = (context.current_pixel.b - context.previous_pixel.b) - green_diff + 8
-        output.write(to_u8bit(DIFFChunk.TAG[0] + green_diff + 32))
+        output.write(to_u8bit(cls.TAG[0] + green_diff + 32))
         output.write(to_u8bit(dr_dg + db_dg))
         context.shift_pixel()
 
@@ -180,7 +181,7 @@ class RUNChunk(GenericChunk):
         super().write(context, output)
         counter: int = 0
         while True:
-            if context.current_pixel == context.previous_pixel:
+            if context.current_pixel and (context.current_pixel == context.previous_pixel):
                 counter += 1
                 context.shift_pixel()
                 if counter == 62:
@@ -196,7 +197,11 @@ class RUNChunk(GenericChunk):
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
-        return context.previous_pixel == context.current_pixel == context.pixels[context.array_position + 1]
+        try:
+            return context.previous_pixel == context.current_pixel == context.pixels[context.array_position + 1]
+        except Exception as e:
+            print(e)
+            return False
 
 
 # Chunk queues, determine the priority of each chunk on the others while writing/reading

@@ -1,5 +1,5 @@
-from qui_converter.chunks import GenericChunk
-from qui_converter.utils import to_u8bit
+from qoi_converter.chunks import GenericChunk
+from qoi_converter.utils import to_u8bit, Pixel
 
 
 class CH1(GenericChunk):
@@ -17,8 +17,17 @@ def test_mask_test():
     assert not CH2.match_tag(CH1.TAG)
 
 
+def test_pixel_equality():
+    p1 = Pixel(0, 0, 0, 255)
+    p2 = Pixel(0, 0, 0, 255)
+    p3 = Pixel(12, 35, 56, 45)
+    assert p1 == p2
+    assert p1 != p3
+
+
 if __name__ == "__main__":
     test_mask_test()
-    byte0 = b"\xfe"
-    byte1 = b"\xff"
-    print(to_u8bit(byte0[0] - byte1[0]))
+    test_pixel_equality()
+    print(Pixel(0, 0, 0, 255).qoi_index)
+    print(Pixel(255, 255, 255, 0).qoi_index)
+

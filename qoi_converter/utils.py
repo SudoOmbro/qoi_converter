@@ -2,6 +2,8 @@ import struct
 from functools import cache
 from typing import List, Tuple
 
+from PIL.Image import Image
+
 
 @cache
 def to_u8bit(num: int):
@@ -54,6 +56,17 @@ class Pixel:
     def __eq__(self, other: "Pixel"):
         return self.compare_rgba(other) == (0, 0)
 
+    def __str__(self):
+        return f"rgb: {self.r} {self.g} {self.b}, alpha: {self.a}"
+
+
+def get_pixels_list(image: Image) -> List[Pixel]:
+    image_data = image.getdata()
+    pixels_list: List[Pixel] = []
+    for tp in image_data:
+        pixels_list.append(Pixel(tp[0], tp[1], tp[2], tp[3]))
+    return pixels_list
+
 
 class RunningArray:
     """ A 64 value long hash map that is constantly updated """
@@ -68,6 +81,15 @@ class RunningArray:
 
     def get(self, qoi_index: int):
         return self._pixels[qoi_index]
+
+    def __str__(self):
+        output: str = ""
+        index: int = 0
+        for pixel in self._pixels:
+            if pixel is not self.DEFAULT_PIXEL:
+                output += f"{index}: ({pixel})\n"
+            index += 1
+        return output
 
 
 class ByteReader:
@@ -122,6 +144,10 @@ class Context:
     def shift_pixel(self):
         """ shift in the array of pixels, useful for writing """
         self.array_position += 1
-        next_pixel = self.pixels[self.array_position]
+        try:
+            next_pixel = self.pixels[self.array_position]
+        except Exception as e:
+            next_pixel = None
+            print(e)
         self.previous_pixel = self.current_pixel
         self.current_pixel = next_pixel

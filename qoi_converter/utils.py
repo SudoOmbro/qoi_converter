@@ -6,12 +6,17 @@ from PIL.Image import Image
 
 
 @cache
-def to_u8bit(num: int) -> bytes:
+def clamp_to_u8bit(num: int) -> int:
     if num < 0:
-        num = 256 + num
+        return num + 256
     elif num > 255:
-        num = num - 256
-    return struct.pack("=B", num)
+        return num - 256
+    return num
+
+
+@cache
+def to_u8bit(num: int) -> bytes:
+    return struct.pack("=B", clamp_to_u8bit(num))
 
 
 def to_u32bit(num: int) -> bytes:
@@ -96,16 +101,13 @@ class RunningArray:
 
 class ByteReader:
 
-    def __init__(self, array: bytearray):
+    def __init__(self, array: bytes):
         self.array = array
         self._offset = 0
 
     def read(self, number_of_bytes: int) -> bytes or None:
         """ reads number_of_bytes bytes from the given array at the current offset & returns them """
-        slice_end: int = self._offset + number_of_bytes
-        if slice_end < len(self.array):
-            return self.array[self._offset:slice_end]
-        return None
+        return self.array[self._offset:self._offset + number_of_bytes]
 
     def shift(self, number_of_bytes: int):
         """ shifts the offset ahead by number_of_bytes bytes """
@@ -135,14 +137,19 @@ class Context:
     def __init__(self, pixels: List[Pixel] or None = None):
         self.pixels = pixels
         self.array_position: int = 0
-        self.current_pixel: Pixel = pixels[0] if pixels else None
+        self.current_pixel: Pixel = pixels[0] if pixels else Pixel(0, 0, 0, 255)
         self.previous_pixel: Pixel = Pixel(0, 0, 0, 255)
         self.running_array = RunningArray()
 
     def next_pixel(self, next_pixel: Pixel):
         """ manually set the next pixel, useful when reading """
         self.previous_pixel = self.current_pixel
+        self.current_pixel = next_pixel
         self.running_array.add(self.current_pixel)
+
+    def next_pixel_no_add(self, next_pixel: Pixel):
+        """ manually set the next pixel, useful when reading """
+        self.previous_pixel = self.current_pixel
         self.current_pixel = next_pixel
 
     def shift_pixel(self):

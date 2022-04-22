@@ -1,7 +1,7 @@
 from io import BytesIO
 from typing import List, Type
 
-from qoi_converter.utils import Context, to_u8bit, Pixel, ByteReader, ChunkType
+from qoi_converter.utils import Context, to_u8bit, Pixel, ByteReader, ChunkType, clamp_to_u8bit
 
 
 class GenericChunk:
@@ -13,7 +13,10 @@ class GenericChunk:
     @classmethod
     def match_tag(cls, input_byte: bytes) -> bool:
         """ returns whether the given byte matches the chunk's tag """
-        return cls.TAG == to_u8bit(input_byte[0] & cls.TAG_BIT_MASK[0])
+        # print(cls.__name__)
+        # print(f"tag: {cls.TAG[0]}, mask: {cls.TAG_BIT_MASK[0]}")
+        # print(f"input: {input_byte[0]}, masked input: {input_byte[0] & cls.TAG_BIT_MASK[0]}\n")
+        return cls.TAG[0] == (input_byte[0] & cls.TAG_BIT_MASK[0])
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
@@ -21,7 +24,7 @@ class GenericChunk:
         raise NotImplemented
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         """ Returns a list of pixels given the context """
         raise NotImplemented
 
@@ -29,6 +32,11 @@ class GenericChunk:
     def can_be_used(context: Context) -> bool:
         """ returns whether the chunk can be used in writing given the current context """
         return True
+
+    @staticmethod
+    def write_pixel(pixel: Pixel, output: BytesIO):
+        for byte in pixel.get_rgba_as_u8bit():
+            output.write(byte)
 
 
 class RGBChunk(GenericChunk):
@@ -46,13 +54,13 @@ class RGBChunk(GenericChunk):
         context.shift_pixel()
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         reader.read_and_shift(1)  # skip the tag
         red: int = reader.read_and_shift(1)[0]
         green: int = reader.read_and_shift(1)[0]
         blue: int = reader.read_and_shift(1)[0]
         context.next_pixel(Pixel(red, green, blue, 255))
-        return [context.current_pixel]
+        cls.write_pixel(context.current_pixel, output)
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
@@ -67,7 +75,6 @@ class RGBAChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         output.write(cls.TAG)
         for byte in context.current_pixel.get_rgba_as_u8bit():
             output.write(byte)
@@ -75,14 +82,14 @@ class RGBAChunk(GenericChunk):
         context.shift_pixel()
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         reader.read_and_shift(1)  # skip the tag
         red: int = reader.read_and_shift(1)[0]
         green: int = reader.read_and_shift(1)[0]
         blue: int = reader.read_and_shift(1)[0]
         alpha: int = reader.read_and_shift(1)[0]
         context.next_pixel(Pixel(red, green, blue, alpha))
-        return [context.current_pixel]
+        cls.write_pixel(context.current_pixel, output)
 
 
 class INDEXChunk(GenericChunk):
@@ -97,9 +104,10 @@ class INDEXChunk(GenericChunk):
         context.shift_pixel()
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         qoi_index = reader.read_and_shift(1)[0]
-        return [context.running_array.get(qoi_index)]
+        context.next_pixel_no_add(context.running_array.get(qoi_index))
+        cls.write_pixel(context.running_array.get(qoi_index), output)
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
@@ -122,25 +130,23 @@ class DIFFChunk(GenericChunk):
         context.shift_pixel()
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         byte: int = reader.read_and_shift(1)[0]
         r_diff: int = ((byte & 0x30) >> 4) - 2
         g_diff: int = ((byte & 0x0c) >> 2) - 2
         b_diff: int = (byte & 0x03) - 2
-        red: int = context.previous_pixel.r + r_diff
-        green: int = context.previous_pixel.g + g_diff
-        blue: int = context.previous_pixel.b + b_diff
-        context.next_pixel(Pixel(red, green, blue, context.previous_pixel.a))
-        return [context.current_pixel]
+        red: int = clamp_to_u8bit(context.current_pixel.r + r_diff)
+        green: int = clamp_to_u8bit(context.current_pixel.g + g_diff)
+        blue: int = clamp_to_u8bit(context.current_pixel.b + b_diff)
+        context.next_pixel_no_add(Pixel(red, green, blue, context.current_pixel.a))
+        cls.write_pixel(context.current_pixel, output)
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
         if context.current_pixel.a != context.previous_pixel.a:
             return False
         rgb_comparison = context.current_pixel.compare_rgb(context.previous_pixel)
-        if (rgb_comparison[0] > -3) and (rgb_comparison[1] < 2):
-            return True
-        return False
+        return (rgb_comparison[0] > -3) and (rgb_comparison[1] < 2)
 
 
 class LUMAChunk(GenericChunk):
@@ -159,25 +165,33 @@ class LUMAChunk(GenericChunk):
         context.shift_pixel()
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         green_diff: int = reader.read_and_shift(1)[0] - cls.TAG[0] - 32
         second_byte: int = reader.read_and_shift(1)[0]
         dr_dg: int = (second_byte & 0xf0) >> 4
         db_dg: int = second_byte & 0x0f
-        cg: int = context.previous_pixel.g + green_diff  # current green
-        cr: int = dr_dg + context.previous_pixel.r + green_diff - 8  # current red
-        cb: int = db_dg + context.previous_pixel.b + green_diff - 8  # current blue
-        context.next_pixel(Pixel(cr, cg, cb, context.previous_pixel.a))
-        return [context.current_pixel]
+        cg: int = context.current_pixel.g + green_diff  # current green
+        cr: int = dr_dg + context.current_pixel.r + green_diff - 8  # current red
+        cb: int = db_dg + context.current_pixel.b + green_diff - 8  # current blue
+        context.next_pixel_no_add(Pixel(cr, cg, cb, context.current_pixel.a))
+        cls.write_pixel(context.current_pixel, output)
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
         if context.current_pixel.a != context.previous_pixel.a:
             return False
-        rgb_comparison = context.current_pixel.compare_rgb(context.previous_pixel)
-        if (rgb_comparison[0] > -33) and (rgb_comparison[1] < 32):
-            return True
-        return False
+        green_diff: int = context.current_pixel.g - context.previous_pixel.g
+        if (green_diff < -32) or (green_diff > 31):
+            return False
+        lower_bound: int = green_diff - 9
+        upper_bound: int = green_diff + 8
+        red_diff: int = context.current_pixel.r - context.previous_pixel.r
+        if not (lower_bound < red_diff < upper_bound):
+            return False
+        blue_diff: int = context.current_pixel.b - context.previous_pixel.b
+        if not (lower_bound < blue_diff < upper_bound):
+            return False
+        return True
 
 
 class RUNChunk(GenericChunk):
@@ -200,9 +214,11 @@ class RUNChunk(GenericChunk):
         output.write(to_u8bit(cls.TAG[0] + counter - 1))
 
     @classmethod
-    def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
+    def read(cls, context: Context, reader: ByteReader, output: BytesIO):
         read_byte: int = reader.read_and_shift(1)[0]
-        return [context.current_pixel for _ in range(read_byte - cls.TAG[0] + 1)]
+        for _ in range(read_byte - cls.TAG[0] + 1):
+            cls.write_pixel(context.current_pixel, output)
+        context.next_pixel_no_add(context.current_pixel)
 
     @staticmethod
     def can_be_used(context: Context) -> bool:

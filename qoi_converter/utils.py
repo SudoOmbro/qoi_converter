@@ -6,13 +6,15 @@ from PIL.Image import Image
 
 
 @cache
-def to_u8bit(num: int):
+def to_u8bit(num: int) -> bytes:
     if num < 0:
         num = 256 + num
+    elif num > 255:
+        num = num - 256
     return struct.pack("=B", num)
 
 
-def to_u32bit(num: int):
+def to_u32bit(num: int) -> bytes:
     if num < 0:
         num = 4294967296 + num
     return struct.pack("=I", num)
@@ -98,9 +100,12 @@ class ByteReader:
         self.array = array
         self._offset = 0
 
-    def read(self, number_of_bytes: int) -> bytes:
+    def read(self, number_of_bytes: int) -> bytes or None:
         """ reads number_of_bytes bytes from the given array at the current offset & returns them """
-        return self.array[self._offset:self._offset + number_of_bytes]
+        slice_end: int = self._offset + number_of_bytes
+        if slice_end < len(self.array):
+            return self.array[self._offset:slice_end]
+        return None
 
     def shift(self, number_of_bytes: int):
         """ shifts the offset ahead by number_of_bytes bytes """
@@ -133,7 +138,6 @@ class Context:
         self.current_pixel: Pixel = pixels[0] if pixels else None
         self.previous_pixel: Pixel = Pixel(0, 0, 0, 255)
         self.running_array = RunningArray()
-        self.previous_chunk_type: int = ChunkType.QOI_OP_RGBA
 
     def next_pixel(self, next_pixel: Pixel):
         """ manually set the next pixel, useful when reading """

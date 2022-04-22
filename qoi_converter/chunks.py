@@ -18,7 +18,7 @@ class GenericChunk:
     @classmethod
     def write(cls, context: Context, output: BytesIO):
         """ Writes some bytes to the output given the context """
-        context.previous_chunk_type = cls.TYPE
+        raise NotImplemented
 
     @classmethod
     def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
@@ -39,7 +39,6 @@ class RGBChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         output.write(cls.TAG)
         for byte in context.current_pixel.get_rgb_as_u8bit():
             output.write(byte)
@@ -94,7 +93,6 @@ class INDEXChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         output.write(to_u8bit(context.current_pixel.qoi_index))
         context.shift_pixel()
 
@@ -117,7 +115,6 @@ class DIFFChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         r_diff: int = (context.current_pixel.r - context.previous_pixel.r + 2) << 4
         g_diff: int = (context.current_pixel.g - context.previous_pixel.g + 2) << 2
         b_diff: int = context.current_pixel.b - context.previous_pixel.b + 2
@@ -126,7 +123,14 @@ class DIFFChunk(GenericChunk):
 
     @classmethod
     def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
-        # TODO
+        byte: int = reader.read_and_shift(1)[0]
+        r_diff: int = ((byte & 0x30) >> 4) - 2
+        g_diff: int = ((byte & 0x0c) >> 2) - 2
+        b_diff: int = (byte & 0x03) - 2
+        red: int = context.previous_pixel.r + r_diff
+        green: int = context.previous_pixel.g + g_diff
+        blue: int = context.previous_pixel.b + b_diff
+        context.next_pixel(Pixel(red, green, blue, context.previous_pixel.a))
         return [context.current_pixel]
 
     @staticmethod
@@ -134,7 +138,7 @@ class DIFFChunk(GenericChunk):
         if context.current_pixel.a != context.previous_pixel.a:
             return False
         rgb_comparison = context.current_pixel.compare_rgb(context.previous_pixel)
-        if (rgb_comparison[0] > -2) and (rgb_comparison[1] < 3):
+        if (rgb_comparison[0] > -3) and (rgb_comparison[1] < 2):
             return True
         return False
 
@@ -147,7 +151,6 @@ class LUMAChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         green_diff: int = context.current_pixel.g - context.previous_pixel.g
         dr_dg: int = ((context.current_pixel.r - context.previous_pixel.r) - green_diff + 8) << 4
         db_dg: int = (context.current_pixel.b - context.previous_pixel.b) - green_diff + 8
@@ -157,7 +160,14 @@ class LUMAChunk(GenericChunk):
 
     @classmethod
     def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
-        # TODO
+        green_diff: int = reader.read_and_shift(1)[0] - cls.TAG[0] - 32
+        second_byte: int = reader.read_and_shift(1)[0]
+        dr_dg: int = (second_byte & 0xf0) >> 4
+        db_dg: int = second_byte & 0x0f
+        cg: int = context.previous_pixel.g + green_diff  # current green
+        cr: int = dr_dg + context.previous_pixel.r + green_diff - 8  # current red
+        cb: int = db_dg + context.previous_pixel.b + green_diff - 8  # current blue
+        context.next_pixel(Pixel(cr, cg, cb, context.previous_pixel.a))
         return [context.current_pixel]
 
     @staticmethod
@@ -178,7 +188,6 @@ class RUNChunk(GenericChunk):
 
     @classmethod
     def write(cls, context: Context, output: BytesIO):
-        super().write(context, output)
         counter: int = 0
         while True:
             if context.current_pixel and (context.current_pixel == context.previous_pixel):
@@ -193,7 +202,7 @@ class RUNChunk(GenericChunk):
     @classmethod
     def read(cls, context: Context, reader: ByteReader) -> List[Pixel]:
         read_byte: int = reader.read_and_shift(1)[0]
-        return [context.previous_pixel for _ in range(read_byte - cls.TAG[0] + 1)]
+        return [context.current_pixel for _ in range(read_byte - cls.TAG[0] + 1)]
 
     @staticmethod
     def can_be_used(context: Context) -> bool:
